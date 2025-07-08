@@ -1,0 +1,23 @@
+{
+  "name": "power-plant-status",
+  "version": "1.0.0",
+  "description": "",
+  "main": "connect.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Abhishek-1310/power-plant-status.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Abhishek-1310/power-plant-status/issues"
+  },
+  "homepage": "https://github.com/Abhishek-1310/power-plant-status#readme",
+  "dependencies": {
+    "aws-sdk": "^2.1692.0"
+  }
+}
