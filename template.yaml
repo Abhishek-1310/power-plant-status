@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Power Plant Maintenance System with REST API and WebSocket
+
+
+Resources:
+
+  ## REST API Gateway
+  MyApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: bgb-energy-plant-api
+      StageName: Prod
+
+  ## S3 bucket to store plant data JSON files
+  PlantDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-plant-data"
+      VersioningConfiguration:
+        Status: Enabled
+
+  ## DynamoDB table to track active WebSocket connections
+  WebSocketConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-WebSocketConnections"
+      AttributeDefinitions:
+        - AttributeName: connectionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connectionId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  ### Lambda to read plant data (GET /plants, GET /plants/{id})
+  ReadPlantFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: bgb-energy-read-plant
+      Handler: readData.handler
+      CodeUri: .
+      MemorySize: 128
+      Timeout: 5
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref PlantDataBucket
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref PlantDataBucket
+      Events:
+        GetPlantById:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MyApiGateway
+            Path: /plants/{id}
+            Method: get
+        GetPlantsList:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MyApiGateway
+            Path: /plants
+            Method: get
+
+  ### Lambda to update plant data and notify WebSocket clients (POST /plants)
+  UpdatePlantFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: bgb-energy-update-plant
+      Handler: updateData.handler
+      CodeUri: .
+      MemorySize: 128
+      Timeout: 5
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref PlantDataBucket
+          TABLE_NAME: !Ref WebSocketConnectionsTable
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref PlantDataBucket
+        - DynamoDBReadPolicy:
+            TableName: !Ref WebSocketConnectionsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+              Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:*/*/POST/@connections/*"
+      Events:
+        PostPlant:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MyApiGateway
+            Path: /plants
+            Method: post
+
+  ### WebSocket API Gateway
+  PlantWebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: bgb-energy-plant-websocket-api
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+
+  ### Lambda for WebSocket $connect route
+  WebSocketConnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: bgb-energy-ws-connect
+      Handler: connect.handler
+      CodeUri: .
+      MemorySize: 128
+      Timeout: 5
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref WebSocketConnectionsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WebSocketConnectionsTable
+      Events:
+        ConnectRoute:
+          Type: Api
+          Properties:
+            ApiId: !Ref PlantWebSocketApi
+            RouteKey: $connect
+
+  ### Lambda for WebSocket $disconnect route
+  WebSocketDisconnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: bgb-energy-ws-disconnect
+      Handler: disconnect.handler
+      CodeUri: .
+      MemorySize: 128
+      Timeout: 5
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref WebSocketConnectionsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WebSocketConnectionsTable
+      Events:
+        DisconnectRoute:
+          Type: Api
+          Properties:
+            ApiId: !Ref PlantWebSocketApi
+            RouteKey: $disconnect
+
