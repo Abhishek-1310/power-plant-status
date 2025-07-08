@@ -1,18 +1,18 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Power Plant Maintenance System with REST API and WebSocket
+Description: Power plant status backend with API, S3, WebSocket, and Lambda
 
+Globals:
+  Function:
+    Runtime: nodejs18.x
+    MemorySize: 128
+    Timeout: 5
+    Architectures:
+      - x86_64
 
 Resources:
 
-  ## REST API Gateway
-  MyApiGateway:
-    Type: AWS::Serverless::Api
-    Properties:
-      Name: bgb-energy-plant-api
-      StageName: Prod
-
-  ## S3 bucket to store plant data JSON files
+  ### S3 Bucket
   PlantDataBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -20,7 +20,7 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
-  ## DynamoDB table to track active WebSocket connections
+  ### DynamoDB Table for WebSocket Connections
   WebSocketConnectionsTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -33,44 +33,48 @@ Resources:
           KeyType: HASH
       BillingMode: PAY_PER_REQUEST
 
-  ### Lambda to read plant data (GET /plants, GET /plants/{id})
-  ReadPlantFunction:
-    Type: AWS::Serverless::Function
+  ### REST API Gateway
+  MyApiGateway:
+    Type: AWS::Serverless::Api
     Properties:
-      FunctionName: bgb-energy-read-plant
-      Handler: readData.handler
-      CodeUri: .
-      MemorySize: 128
-      Timeout: 5
-      Environment:
-        Variables:
-          BUCKET_NAME: !Ref PlantDataBucket
-      Policies:
-        - S3ReadPolicy:
-            BucketName: !Ref PlantDataBucket
-      Events:
-        GetPlantById:
-          Type: Api
-          Properties:
-            RestApiId: !Ref MyApiGateway
-            Path: /plants/{id}
-            Method: get
-        GetPlantsList:
-          Type: Api
-          Properties:
-            RestApiId: !Ref MyApiGateway
-            Path: /plants
-            Method: get
+      Name: PlantRestApi
+      StageName: Prod
 
-  ### Lambda to update plant data and notify WebSocket clients (POST /plants)
+  ### WebSocket API Gateway
+  PlantWebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: PlantWebSocketApi
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+
+  ### IAM Role for API Gateway to invoke Lambda (WebSocket)
+  WebSocketApiInvokeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambdaWebSocket
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: "*"
+
+  ### Lambda to update plant data & notify WebSocket clients
   UpdatePlantFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: bgb-energy-update-plant
+      FunctionName: UpdatePlantFunction
       Handler: updateData.handler
       CodeUri: .
-      MemorySize: 128
-      Timeout: 5
       Environment:
         Variables:
           BUCKET_NAME: !Ref PlantDataBucket
@@ -78,70 +82,127 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref PlantDataBucket
-        - DynamoDBReadPolicy:
+        - DynamoDBCrudPolicy:
             TableName: !Ref WebSocketConnectionsTable
         - Statement:
             - Effect: Allow
               Action:
                 - execute-api:ManageConnections
-              Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:*/*/POST/@connections/*"
+              Resource: "*"
       Events:
-        PostPlant:
+        ApiEvent:
           Type: Api
           Properties:
             RestApiId: !Ref MyApiGateway
             Path: /plants
-            Method: post
+            Method: POST
 
-  ### WebSocket API Gateway
-  PlantWebSocketApi:
-    Type: AWS::ApiGatewayV2::Api
+  ### Lambda to read plant data from S3
+  ReadPlantFunction:
+    Type: AWS::Serverless::Function
     Properties:
-      Name: bgb-energy-plant-websocket-api
-      ProtocolType: WEBSOCKET
-      RouteSelectionExpression: "$request.body.action"
+      FunctionName: ReadPlantFunction
+      Handler: readData.handler
+      CodeUri: .
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref PlantDataBucket
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref PlantDataBucket
+      Events:
+        GetPlantEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MyApiGateway
+            Path: /plants/{plant_id}
+            Method: GET
 
-  ### Lambda for WebSocket $connect route
+  ### Lambda: WebSocket $connect
   WebSocketConnectFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: bgb-energy-ws-connect
+      FunctionName: WebSocketConnectFunction
       Handler: connect.handler
       CodeUri: .
-      MemorySize: 128
-      Timeout: 5
       Environment:
         Variables:
           TABLE_NAME: !Ref WebSocketConnectionsTable
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref WebSocketConnectionsTable
-      Events:
-        ConnectRoute:
-          Type: Api
-          Properties:
-            ApiId: !Ref PlantWebSocketApi
-            RouteKey: $connect
 
-  ### Lambda for WebSocket $disconnect route
+  ### Lambda: WebSocket $disconnect
   WebSocketDisconnectFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: bgb-energy-ws-disconnect
+      FunctionName: WebSocketDisconnectFunction
       Handler: disconnect.handler
       CodeUri: .
-      MemorySize: 128
-      Timeout: 5
       Environment:
         Variables:
           TABLE_NAME: !Ref WebSocketConnectionsTable
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref WebSocketConnectionsTable
-      Events:
-        DisconnectRoute:
-          Type: Api
-          Properties:
-            ApiId: !Ref PlantWebSocketApi
-            RouteKey: $disconnect
 
+  ### WebSocket Integrations
+  WebSocketConnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref PlantWebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub
+        - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ConnectLambdaArn}/invocations
+        - { ConnectLambdaArn: !GetAtt WebSocketConnectFunction.Arn }
+      IntegrationMethod: POST
+      CredentialsArn: !GetAtt WebSocketApiInvokeRole.Arn
+
+  WebSocketDisconnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref PlantWebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub
+        - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DisconnectLambdaArn}/invocations
+        - { DisconnectLambdaArn: !GetAtt WebSocketDisconnectFunction.Arn }
+      IntegrationMethod: POST
+      CredentialsArn: !GetAtt WebSocketApiInvokeRole.Arn
+
+  ### WebSocket Routes
+  WebSocketConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PlantWebSocketApi
+      RouteKey: $connect
+      Target: !Sub "integrations/${WebSocketConnectIntegration}"
+
+  WebSocketDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PlantWebSocketApi
+      RouteKey: $disconnect
+      Target: !Sub "integrations/${WebSocketDisconnectIntegration}"
+
+  ### WebSocket Deployment
+  WebSocketStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      StageName: Prod
+      ApiId: !Ref PlantWebSocketApi
+      AutoDeploy: true
+
+  ### Permissions: Allow WebSocket API to call Lambdas
+  WebSocketConnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt WebSocketConnectFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+
+  WebSocketDisconnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt WebSocketDisconnectFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
