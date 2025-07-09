@@ -77,8 +77,9 @@ Resources:
       CodeUri: .
       Environment:
         Variables:
+          CONNECTION_TABLE: !Ref WebSocketConnectionsTable
           BUCKET_NAME: !Ref PlantDataBucket
-          TABLE_NAME: !Ref WebSocketConnectionsTable
+          WEBSOCKET_ENDPOINT: !Sub "${PlantWebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref PlantDataBucket
