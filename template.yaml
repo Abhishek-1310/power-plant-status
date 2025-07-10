@@ -102,10 +102,6 @@ Resources:
             RestApiId: !Ref MyApiGateway
             Path: /plants
             Method: POST
-            Cors:
-              AllowMethods: "'POST,OPTIONS'"
-              AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
-              AllowOrigin: "'*'"
 
   ### Lambda to read plant data from S3
   ReadPlantFunction:
@@ -127,20 +123,12 @@ Resources:
             RestApiId: !Ref MyApiGateway
             Path: /plants/{plant_id}
             Method: GET
-            Cors:
-              AllowMethods: "'GET,OPTIONS'"
-              AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
-              AllowOrigin: "'*'"
         AllPlantsEvent:
           Type: Api
           Properties:
             RestApiId: !Ref MyApiGateway
             Path: /plants
             Method: GET
-            Cors:
-              AllowMethods: "'GET,OPTIONS'"
-              AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
-              AllowOrigin: "'*'"
 
   ### Lambda: WebSocket $connect
   WebSocketConnectFunction:
