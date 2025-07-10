@@ -14,29 +14,50 @@ exports.handler = async (event) => {
     try {
         const body = JSON.parse(event.body);
 
-        const fileName = `plants/${body.plant_id}.json`;
-        const s3Params = {
-            Bucket: BUCKET_NAME,
-            Key: fileName,
-            Body: JSON.stringify(body),
-            ContentType: "application/json",
+        // ✅ Validate input
+        if (!body.plant_id || typeof body.plant_id !== 'string') {
+            return {
+                statusCode: 400,
+                body: JSON.stringify({ error: 'Invalid plant_id' }),
+            };
+        }
+
+        const key = `plants/${body.plant_id}.json`;
+
+        // ✅ Check if file already exists (optional)
+        let previousData = null;
+        try {
+            const existing = await s3.getObject({ Bucket: BUCKET_NAME, Key: key }).promise();
+            previousData = JSON.parse(existing.Body.toString('utf-8'));
+        } catch (err) {
+            if (err.code !== 'NoSuchKey') throw err;
+        }
+
+        // ✅ Overwrite with new data
+        const updated = {
+            ...previousData,
+            ...body,
+            last_updated: new Date().toISOString(),
         };
 
-        // Save to S3
-        await s3.putObject(s3Params).promise();
+        await s3.putObject({
+            Bucket: BUCKET_NAME,
+            Key: key,
+            Body: JSON.stringify(updated),
+            ContentType: "application/json",
+        }).promise();
 
-        // Get all active WebSocket connections
+        // ✅ Notify all active WebSocket clients
         const connectionData = await ddb.scan({ TableName: CONNECTION_TABLE }).promise();
 
         const postCalls = connectionData.Items.map(async ({ connectionId }) => {
             try {
                 await apiGateway.postToConnection({
                     ConnectionId: connectionId,
-                    Data: JSON.stringify(body),
+                    Data: JSON.stringify(updated),
                 }).promise();
             } catch (err) {
                 if (err.statusCode === 410) {
-                    // Stale connection, delete it
                     await ddb.delete({
                         TableName: CONNECTION_TABLE,
                         Key: { connectionId },
@@ -51,14 +72,14 @@ exports.handler = async (event) => {
 
         return {
             statusCode: 200,
-            body: JSON.stringify({ message: 'Plant data updated and pushed to clients.' }),
+            body: JSON.stringify({ message: 'Plant data updated and broadcasted.' }),
         };
 
     } catch (err) {
         console.error("Error:", err);
         return {
             statusCode: 500,
-            body: JSON.stringify({ error: 'Failed to update and notify clients.' }),
+            body: JSON.stringify({ error: 'Failed to update plant.' }),
         };
     }
 };

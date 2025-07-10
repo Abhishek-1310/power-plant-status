@@ -118,6 +118,12 @@ Resources:
             RestApiId: !Ref MyApiGateway
             Path: /plants/{plant_id}
             Method: GET
+        AllPlantsEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MyApiGateway
+            Path: /plants
+            Method: GET
 
   ### Lambda: WebSocket $connect
   WebSocketConnectFunction:

@@ -4,23 +4,39 @@ const BUCKET_NAME = process.env.BUCKET_NAME;
 
 exports.handler = async (event) => {
     try {
-        const plantId = event.pathParameters ? event.pathParameters.id : null;
+        const plantId = event.pathParameters?.id;
 
         if (plantId) {
-            // Return specific plant
-            const res = await s3.getObject({
-                Bucket: BUCKET_NAME,
-                Key: `${plantId}.json`
-            }).promise();
+            const key = `plants/${plantId}.json`;
 
-            return {
-                statusCode: 200,
-                body: res.Body.toString('utf-8'),
-                headers: { 'Content-Type': 'application/json' }
-            };
+            try {
+                const res = await s3.getObject({
+                    Bucket: BUCKET_NAME,
+                    Key: key
+                }).promise();
+
+                return {
+                    statusCode: 200,
+                    body: res.Body.toString('utf-8'),
+                    headers: { 'Content-Type': 'application/json' }
+                };
+            } catch (err) {
+                if (err.code === 'NoSuchKey') {
+                    return {
+                        statusCode: 404,
+                        body: JSON.stringify({ error: 'Plant not found' }),
+                    };
+                }
+                throw err;
+            }
+
         } else {
             // List all plants
-            const listedObjects = await s3.listObjectsV2({ Bucket: BUCKET_NAME }).promise();
+            const listedObjects = await s3.listObjectsV2({
+                Bucket: BUCKET_NAME,
+                Prefix: 'plants/',
+            }).promise();
+
             const keys = listedObjects.Contents.map(obj => obj.Key);
 
             const files = await Promise.all(keys.map(async key => {
