@@ -11,6 +11,11 @@ const apiGateway = new AWS.ApiGatewayManagementApi({
 });
 
 exports.handler = async (event) => {
+    const corsHeaders = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Allow-Methods": "POST,OPTIONS",
+    };
     try {
         const body = JSON.parse(event.body);
 
@@ -19,6 +24,7 @@ exports.handler = async (event) => {
             return {
                 statusCode: 400,
                 body: JSON.stringify({ error: 'Invalid plant_id' }),
+                headers: corsHeaders
             };
         }
 
@@ -73,6 +79,7 @@ exports.handler = async (event) => {
         return {
             statusCode: 200,
             body: JSON.stringify({ message: 'Plant data updated and broadcasted.' }),
+            headers: corsHeaders
         };
 
     } catch (err) {
@@ -80,6 +87,7 @@ exports.handler = async (event) => {
         return {
             statusCode: 500,
             body: JSON.stringify({ error: 'Failed to update plant.' }),
+            headers: corsHeaders
         };
     }
 };
